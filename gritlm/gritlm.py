@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from typing import Dict, List, Union, cast
 
 import numpy as np
@@ -10,7 +12,7 @@ class GritLM(torch.nn.Module):
     def __init__(
         self,
         model_name_or_path: str = None,
-        mode: str = 'unified', # One of ['unified', 'embedding', 'generative']        
+        mode: str = 'unified', # One of ['unified', 'embedding', 'generative']
         pooling_method: str = 'mean', # One of ['cls', 'lasttoken', 'mean', 'weightedmean']
         normalized: bool = True,
         projection: int = None,
@@ -32,15 +34,15 @@ class GritLM(torch.nn.Module):
             self.model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True, **kwargs)
             self.generate = self.model.generate
 
-            if hasattr(self.model, 'model'): # LLama2 & Mistral
+            if hasattr(self.model, 'model'):  # LLama2 & Mistral
                 self.embedding_attr = 'model'
             elif hasattr(self.model, 'transformer'): # GPT-Neo & GPT-J
                 self.embedding_attr = 'transformer'
-            else: 
+            else:
                 raise ValueError("Could not find attribute to use for embedding: ", self.model)
 
         self.projection = torch.nn.Linear(
-            in_features=self.model.config.hidden_size, 
+            in_features=self.model.config.hidden_size,
             out_features=int(projection),
             dtype=self.model.dtype
         ) if projection is not None else None
@@ -51,6 +53,7 @@ class GritLM(torch.nn.Module):
         self.num_gpus = 1
         self.embed_eos = embed_eos
         self.attn = attn
+        self._model_name_or_path = model_name_or_path
         if (self.attn is not None) and self.attn not in ['bbcc', 'cccc', 'bb', 'cc']:
             raise ValueError(f"Mixed attention no longer supported: {self.attn}. Only bbcc, cccc, bb, cc are supported")
 
@@ -61,7 +64,7 @@ class GritLM(torch.nn.Module):
             self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side='right')
             if not(self.tokenizer.pad_token) and self.tokenizer.eos_token:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-                print('Set pad token to eos token: ' + self.tokenizer.pad_token)        
+                print('Set pad token to eos token: ' + self.tokenizer.pad_token)
             if self.embed_eos:
                 assert self.embed_eos in self.tokenizer.vocab, f"EOS token {self.embed_eos} not in vocab"
             self.model.eval()
@@ -84,7 +87,7 @@ class GritLM(torch.nn.Module):
             corpus = [corpus]
         if isinstance(corpus, list) and isinstance(corpus[0], dict):
             corpus = [
-                doc["title"] + " " + doc["text"] if "title" in doc 
+                doc["title"] + " " + doc["text"] if "title" in doc
                 else doc["text"] for doc in corpus
             ]
         return self.encode(corpus, **kwargs)
@@ -112,7 +115,7 @@ class GritLM(torch.nn.Module):
             input_was_string = True
 
         all_embeddings, all_kv_caches = [], []
-        for start_index in tqdm(range(0, len(sentences), batch_size), desc="Batches", disable=len(sentences)<256):
+        for start_index in tqdm(range(0, len(sentences), batch_size), desc="Batches", disable=len(sentences) < 256):
             sentences_batch = [
                 instruction + s + self.embed_eos for s in sentences[start_index:start_index + batch_size]
             ]
@@ -126,8 +129,9 @@ class GritLM(torch.nn.Module):
                 add_special_tokens=add_special_tokens,
             ).to(self.device)
 
-            if (self.attn is not None) and (self.attn[:2] == 'bb'):
-                inputs["is_causal"] = False
+            if 'Yi' not in self._model_name_or_path:  # not a Yi model
+                if (self.attn is not None) and (self.attn[:2] == 'bb'):
+                    inputs["is_causal"] = False
             if get_cache:
                 inputs['use_cache'] = True
             outputs = (
@@ -153,7 +157,7 @@ class GritLM(torch.nn.Module):
                 inputs['attention_mask'][:, :len(instruction_tokens)] = 0
             embeddings = self.pooling(last_hidden_state, inputs['attention_mask'], recast=recast)
             # Normalize can change the dtype (https://discuss.pytorch.org/t/tensor-in-float16-is-transformed-into-float32-after-torch-norm/110891)
-            if self.normalized: 
+            if self.normalized:
                 in_dtype = embeddings.dtype
                 embeddings = torch.nn.functional.normalize(embeddings, dim=-1).to(in_dtype)
             embeddings = cast(torch.Tensor, embeddings)
@@ -216,3 +220,89 @@ class GritLM(torch.nn.Module):
         # Recasting performs slightly worse but saves 50% space
         if recast: return embedding.to(hidden_state.dtype)
         return embedding
+
+
+def sort_simi(model, queries, documents, instruction=""):
+    q_reps = model.encode(
+        sentences=queries,
+        batch_size=16,
+        max_length=256,
+        instruction=instruction,
+        embed_instruction = False,
+        get_cache = False,
+        convert_to_tensor = False,
+        recast = False,
+        add_special_tokens = True)
+
+    d_reps = model.encode(
+        sentences=documents,
+        batch_size=64,
+        max_length=256,
+        instruction="",
+        embed_instruction=False,
+        get_cache=False,
+        convert_to_tensor=False,
+        recast=False,
+        add_special_tokens=True)
+
+    cos_sim = torch.mm(torch.from_numpy(q_reps), torch.from_numpy(d_reps).transpose(0, 1))
+    print(cos_sim.tolist())
+
+
+    result_list = []
+    for i in range(len(queries)):
+        print(queries[i])
+        result = [documents[j] for j in np.argsort(cos_sim[i]).tolist()[::-1]][:10]
+        print(result)
+        result_list.append(result)
+        _ = 100
+
+    return result_list
+    # print(queries)
+    # print(sentence_list)
+
+
+if __name__ == "__main__":
+    # Encoding queries using instructions
+    instruction = "给定一个字段类型名称，返回符合该字段名称相对应的内容的段落："
+    queries = [
+        "违约责任",
+        "争议解决"
+    ]
+
+    model = GritLM(
+        # model_name_or_path = '/data/models/GritLM-7B',
+        model_name_or_path = '/data/models/Yi-34B',
+        # mode = 'embedding', # One of ['unified', 'embedding', 'generative']
+        pooling_method='mean',  # One of ['cls', 'lasttoken', 'mean', 'weightedmean']
+        normalized=True,
+        projection=None,
+        is_inference=True,
+        embed_eos="",
+        attn='bbcc',
+
+        # from base ellm server
+        mode='unified',
+        torch_dtype=torch.float16,
+        load_in_8bit=False,
+        device_map='auto'
+    )
+
+    sentence_list = [
+        "本合同未涉及的条款,按照《中华人民共和国合同法》的有关规定执行。供方所供货物不符合质量标准的,需方有权退货并要求供方赔偿因此产生的一切经济损失。需方不能按合同约定向供方支付全额或部分货款的,需方应向供方支付尚未支付部分货款总额15%的违约金,并承担由此产生的一切损失。",
+        "供需双方如发生争议，协商不成的，应当向原告方所在地人民法院提起诉讼",
+        "双方加盖章后才正式确认本合同。本合同可以通过传真,扫描等方式送达,同样具备法律效力。"
+    ]
+    """
+    load all json
+    """
+
+
+    sort_simi(model=model, queries=queries, documents=sentence_list)
+
+
+
+
+
+
+
