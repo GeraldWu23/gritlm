@@ -69,7 +69,6 @@ export CMD=" \
     --passage_max_len 2048 \
     --mode unified \
     --logging_steps 1 \
-    --bf16 \
     --pooling_method mean \
     --use_unique_indices \
     --loss_gen_type mixed \

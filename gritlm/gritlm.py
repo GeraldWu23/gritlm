@@ -12,14 +12,14 @@ class GritLM(torch.nn.Module):
     def __init__(
         self,
         model_name_or_path: str = None,
-        mode: str = 'unified', # One of ['unified', 'embedding', 'generative']
+        mode: str = 'unified',  # One of ['unified', 'embedding', 'generative']
         pooling_method: str = 'mean', # One of ['cls', 'lasttoken', 'mean', 'weightedmean']
         normalized: bool = True,
         projection: int = None,
         is_inference: bool = True,
         embed_eos: str = "",
         attn: str = 'bbcc',
-        **kwargs, # Passed to the model, e.g. `attn_implementation`, `torch_dtype` etc.
+        **kwargs,  # Passed to the model, e.g. `attn_implementation`, `torch_dtype` etc.
     ) -> None:
         super().__init__()
         if mode == 'embedding':
@@ -36,7 +36,7 @@ class GritLM(torch.nn.Module):
 
             if hasattr(self.model, 'model'):  # LLama2 & Mistral
                 self.embedding_attr = 'model'
-            elif hasattr(self.model, 'transformer'): # GPT-Neo & GPT-J
+            elif hasattr(self.model, 'transformer'):  # GPT-Neo & GPT-J
                 self.embedding_attr = 'transformer'
             else:
                 raise ValueError("Could not find attribute to use for embedding: ", self.model)
@@ -67,6 +67,7 @@ class GritLM(torch.nn.Module):
                 print('Set pad token to eos token: ' + self.tokenizer.pad_token)
             if self.embed_eos:
                 assert self.embed_eos in self.tokenizer.vocab, f"EOS token {self.embed_eos} not in vocab"
+            self.model = torch.compile(self.model)
             self.model.eval()
             if not("device_map" in kwargs) and not(kwargs.get("load_in_4bit", False)) and not(kwargs.get("load_in_8bit", False)):
                 self.model.to(self.device)
