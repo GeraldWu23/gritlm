@@ -1,0 +1,1 @@
+../chapter_locating/chapter_locating/app/scripts/get_table_merger.py
