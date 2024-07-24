@@ -242,6 +242,7 @@ def main():
         low_cpu_mem_usage=True,
         quantization_config=quantization_config,
         load_in_4bit=load_in_4bit,
+        device_map="auto"
     )
     # Add special token for embed
     if model_args.pooling_method == "lasttoken":

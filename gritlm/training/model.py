@@ -142,7 +142,11 @@ class GritLMTrainModel(GritLM):
             kwargs['instruction_lens'] = instruction_lens
         elif self.attn[:2] == 'bb':
             kwargs['is_causal'] = False
-        out = (getattr(self.model, self.embedding_attr) if self.embedding_attr else self.model)(**kwargs)[0]
+        try:
+            out = (getattr(self.model, self.embedding_attr) if self.embedding_attr else self.model)(**kwargs)[0]
+        except Exception as e:
+            print(f"\n\n\n\n\n{self.model.device}, {kwargs['input_ids'].device}, {kwargs['attention_mask'].device}")
+            raise RuntimeError(e)
 
         if self.projection is not None:
             out = self.projection(out)

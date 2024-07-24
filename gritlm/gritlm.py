@@ -22,6 +22,7 @@ class GritLM(torch.nn.Module):
         **kwargs,  # Passed to the model, e.g. `attn_implementation`, `torch_dtype` etc.
     ) -> None:
         super().__init__()
+        print(f"\n\ninput kwargs: {kwargs}\n\n")
         if mode == 'embedding':
             if any([x in model_name_or_path for x in ['gtr', 't5', 'instructor']]):
                 # Somehow AutoModel does not pick the right one by default
@@ -67,10 +68,11 @@ class GritLM(torch.nn.Module):
                 print('Set pad token to eos token: ' + self.tokenizer.pad_token)
             if self.embed_eos:
                 assert self.embed_eos in self.tokenizer.vocab, f"EOS token {self.embed_eos} not in vocab"
-            self.model = torch.compile(self.model)
+            # self.model = torch.compile(self.model)  # Fixme
             self.model.eval()
             if not("device_map" in kwargs) and not(kwargs.get("load_in_4bit", False)) and not(kwargs.get("load_in_8bit", False)):
                 self.model.to(self.device)
+                print("not device map in kwargs and not load in 4/8 bit")
                 # Parallelize embedding model
                 if mode == 'embedding':
                     self.num_gpus = torch.cuda.device_count()
@@ -128,7 +130,7 @@ class GritLM(torch.nn.Module):
                 return_tensors='pt',
                 max_length=max_length,
                 add_special_tokens=add_special_tokens,
-            ).to(self.device)
+            )#TODO: to(self.device)
 
             if 'Yi' not in self._model_name_or_path:  # not a Yi model
                 if (self.attn is not None) and (self.attn[:2] == 'bb'):
@@ -189,7 +191,7 @@ class GritLM(torch.nn.Module):
             attention_mask: [b, n]
         """
         # In case the model is distributed across multiple devices; hidden_state may end up on diff device
-        hidden_state = hidden_state.to(attention_mask.device)
+        hidden_state = hidden_state  # TODO: .to(attention_mask.device)
         if self.pooling_method == 'cls':
             embedding = hidden_state[:, 0]
         elif self.pooling_method == 'lasttoken':
